@@ -1,0 +1,17 @@
+﻿{
+  "name": "FDM3D-Enclosure-dashboard",
+  "version": "0.1.0",
+  "description": "FDM3D-Enclosure 空气质量实时仪表盘",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js --dev"
+  },
+  "dependencies": {
+    "express": "^4.18.0",
+    "socket.io": "^4.7.0",
+    "serialport": "^12.0.0",
+    "chart.js": "^4.4.0"
+  },
+  "license": "MIT"
+}

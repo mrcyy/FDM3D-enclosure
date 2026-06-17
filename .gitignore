@@ -1,0 +1,52 @@
+﻿# FDM3D-Enclosure .gitignore
+
+# PlatformIO
+.pio/
+.pioenvs/
+.piolibdeps/
+
+# Arduino
+*.o
+*.a
+*.elf
+*.hex
+build/
+
+# Node.js
+node_modules/
+dist/
+.cache/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.venv/
+venv/
+
+# KiCad
+*.bak
+*.kicad_autosave
+*-backups/
+fp-info-cache
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+/data/
+/logs/
+
+# Environment
+.env
+.env.local

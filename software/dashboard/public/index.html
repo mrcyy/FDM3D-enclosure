@@ -1,0 +1,289 @@
+﻿<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FDM3D-Enclosure · 空气质量仪表盘</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <script src="/socket.io/socket.io.js"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #0f0f23;
+            color: #e0e0e0;
+            padding: 20px;
+        }
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 24px;
+            padding-bottom: 16px;
+            border-bottom: 1px solid #2a2a4a;
+        }
+        .header h1 {
+            font-size: 24px;
+            background: linear-gradient(135deg, #00d4ff, #7b2ff7);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+        .header .status {
+            font-size: 14px;
+            color: #888;
+        }
+        .header .status.online { color: #4ade80; }
+        .header .status.offline { color: #f87171; }
+        
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 16px;
+            margin-bottom: 24px;
+        }
+        .card {
+            background: #1a1a35;
+            border-radius: 12px;
+            padding: 20px;
+            border: 1px solid #2a2a4a;
+        }
+        .card h3 {
+            font-size: 13px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            color: #8888aa;
+            margin-bottom: 8px;
+        }
+        .card .value {
+            font-size: 36px;
+            font-weight: 700;
+        }
+        .card .unit {
+            font-size: 16px;
+            color: #888;
+            margin-left: 4px;
+        }
+        .card .sub {
+            font-size: 12px;
+            color: #666;
+            margin-top: 4px;
+        }
+        .pm25 .value { color: #4ade80; }
+        .pm25.warning .value { color: #facc15; }
+        .pm25.danger .value { color: #f87171; }
+        .tvoc .value { color: #60a5fa; }
+        .eco2 .value { color: #c084fc; }
+        .temp .value { color: #fb923c; }
+        .hum .value { color: #38bdf8; }
+
+        .chart-container {
+            background: #1a1a35;
+            border-radius: 12px;
+            padding: 20px;
+            border: 1px solid #2a2a4a;
+            margin-bottom: 16px;
+        }
+        .chart-container canvas {
+            width: 100% !important;
+            max-height: 300px;
+        }
+
+        .info-bar {
+            display: flex;
+            gap: 24px;
+            padding: 12px 20px;
+            background: #1a1a35;
+            border-radius: 12px;
+            border: 1px solid #2a2a4a;
+            font-size: 13px;
+            color: #888;
+        }
+        .info-bar span { color: #e0e0e0; }
+
+        @media (max-width: 640px) {
+            .grid { grid-template-columns: 1fr 1fr; }
+            .card .value { font-size: 28px; }
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>🔬 FDM3D-Enclosure · 空气质量</h1>
+        <div>
+            <span class="status" id="connectionStatus">● 离线</span>
+        </div>
+    </div>
+
+    <div class="grid">
+        <div class="card pm25" id="pm25Card">
+            <h3>⏺ PM2.5 颗粒物</h3>
+            <div>
+                <span class="value" id="pm25Value">--</span>
+                <span class="unit">µg/m³</span>
+            </div>
+            <div class="sub" id="pm25Sub">PM10: -- µg/m³</div>
+        </div>
+        <div class="card tvoc">
+            <h3>🧪 TVOC 总挥发性有机物</h3>
+            <div>
+                <span class="value" id="tvocValue">--</span>
+                <span class="unit">ppb</span>
+            </div>
+            <div class="sub" id="tvocSub">安全阈值: &lt; 250 ppb</div>
+        </div>
+        <div class="card eco2">
+            <h3>🌿 eCO₂ 等效 CO₂</h3>
+            <div>
+                <span class="value" id="eco2Value">--</span>
+                <span class="unit">ppm</span>
+            </div>
+            <div class="sub">大气基线: ~400 ppm</div>
+        </div>
+        <div class="card temp">
+            <h3>🌡️ 温度</h3>
+            <div>
+                <span class="value" id="tempValue">--</span>
+                <span class="unit">°C</span>
+            </div>
+            <div class="sub" id="humSub">湿度: --%</div>
+        </div>
+    </div>
+
+    <div class="chart-container">
+        <canvas id="historyChart"></canvas>
+    </div>
+
+    <div class="info-bar">
+        <div>风扇: <span id="fanSpeed">--</span>%</div>
+        <div>更新: <span id="lastUpdate">--</span></div>
+        <div>数据点: <span id="dataPoints">0</span></div>
+    </div>
+
+    <script>
+        const socket = io();
+        let chart;
+
+        // 初始化 Chart.js
+        function initChart() {
+            const ctx = document.getElementById('historyChart').getContext('2d');
+            chart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: [],
+                    datasets: [
+                        {
+                            label: 'PM2.5 (µg/m³)',
+                            data: [],
+                            borderColor: '#4ade80',
+                            backgroundColor: 'rgba(74,222,128,0.1)',
+                            tension: 0.3,
+                            fill: false,
+                            pointRadius: 0,
+                            borderWidth: 2
+                        },
+                        {
+                            label: 'TVOC (ppb)',
+                            data: [],
+                            borderColor: '#60a5fa',
+                            backgroundColor: 'rgba(96,165,250,0.1)',
+                            tension: 0.3,
+                            fill: false,
+                            pointRadius: 0,
+                            borderWidth: 2
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    interaction: { intersect: false, mode: 'index' },
+                    scales: {
+                        x: {
+                            ticks: { 
+                                color: '#666',
+                                maxTicksLimit: 10,
+                                callback: v => {
+                                    const lbl = chart.data.labels[v];
+                                    return lbl ? lbl.split('T')[1].slice(0,5) : '';
+                                }
+                            },
+                            grid: { color: '#2a2a4a' }
+                        },
+                        y: {
+                            beginAtZero: true,
+                            ticks: { color: '#666' },
+                            grid: { color: '#2a2a4a' }
+                        }
+                    },
+                    plugins: {
+                        legend: {
+                            labels: { color: '#888' }
+                        }
+                    }
+                }
+            });
+        }
+
+        // 更新 PM2.5 卡片颜色
+        function updatePM25Color(value) {
+            const card = document.getElementById('pm25Card');
+            card.classList.remove('warning', 'danger');
+            if (value > 100) card.classList.add('danger');
+            else if (value > 50) card.classList.add('warning');
+        }
+
+        // 连接 WebSocket
+        socket.on('connect', () => {
+            document.getElementById('connectionStatus').textContent = '● 在线';
+            document.getElementById('connectionStatus').className = 'status online';
+        });
+
+        socket.on('disconnect', () => {
+            document.getElementById('connectionStatus').textContent = '● 离线';
+            document.getElementById('connectionStatus').className = 'status offline';
+        });
+
+        // 接收历史数据
+        socket.on('history', (data) => {
+            if (chart && data.timestamps) {
+                chart.data.labels = data.timestamps;
+                chart.data.datasets[0].data = data.pm25;
+                chart.data.datasets[1].data = data.tvoc;
+                chart.update('none');
+                document.getElementById('dataPoints').textContent = data.timestamps.length;
+            }
+        });
+
+        // 接收实时数据
+        socket.on('sensor-data', (msg) => {
+            const d = msg.current;
+            const h = msg.history;
+
+            // 更新当前值
+            document.getElementById('pm25Value').textContent = d.pm25?.toFixed(1) || '--';
+            document.getElementById('tvocValue').textContent = d.tvoc ?? '--';
+            document.getElementById('eco2Value').textContent = d.eco2 ?? '--';
+            document.getElementById('tempValue').textContent = d.temp?.toFixed(1) || '--';
+
+            // 更新次要信息
+            document.getElementById('pm25Sub').textContent = `PM10: ${d.pm10?.toFixed(1) || '--'} µg/m³`;
+            document.getElementById('humSub').textContent = `湿度: ${d.hum?.toFixed(1) || '--'}%`;
+            document.getElementById('fanSpeed').textContent = d.fan_pwm ? ((d.fan_pwm / 255) * 100).toFixed(0) : '--';
+            document.getElementById('lastUpdate').textContent = new Date().toLocaleTimeString();
+            document.getElementById('dataPoints').textContent = h?.timestamps?.length || 0;
+
+            updatePM25Color(d.pm25 || 0);
+
+            // 更新图表
+            if (chart && h.timestamps) {
+                chart.data.labels = h.timestamps;
+                chart.data.datasets[0].data = h.pm25;
+                chart.data.datasets[1].data = h.tvoc;
+                chart.update('none');
+            }
+        });
+
+        initChart();
+    </script>
+</body>
+</html>
