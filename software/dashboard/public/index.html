@@ -1,10 +1,20 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>FDM3D-Enclosure · 空气质量仪表盘</title>
-    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <!-- Chart.js with local fallback -->
+    <script>
+        // CDN 加载失败时用本地版本
+        window.onerror = function(e) {
+            if (e && e.toString().includes('Chart')) {
+                document.write('<script src="/chart.umd.min.js"><\/script>');
+            }
+        };
+    </script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"
+            onerror="this.onerror=null;document.write('<script src=\\'/chart.umd.min.js\\'><\\/script>')"></script>
     <script src="/socket.io/socket.io.js"></script>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -21,6 +31,8 @@
             margin-bottom: 24px;
             padding-bottom: 16px;
             border-bottom: 1px solid #2a2a4a;
+            flex-wrap: wrap;
+            gap: 12px;
         }
         .header h1 {
             font-size: 24px;
@@ -31,13 +43,17 @@
         .header .status {
             font-size: 14px;
             color: #888;
+            padding: 4px 12px;
+            border-radius: 8px;
+            background: #1a1a35;
         }
-        .header .status.online { color: #4ade80; }
-        .header .status.offline { color: #f87171; }
+        .header .status.online { color: #4ade80; border: 1px solid #4ade8033; }
+        .header .status.offline { color: #f87171; border: 1px solid #f8717133; }
+        .header .status.demo { color: #facc15; border: 1px solid #facc1533; }
         
         .grid {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
             gap: 16px;
             margin-bottom: 24px;
         }
@@ -46,6 +62,14 @@
             border-radius: 12px;
             padding: 20px;
             border: 1px solid #2a2a4a;
+            position: relative;
+            overflow: hidden;
+        }
+        .card::before {
+            content: '';
+            position: absolute;
+            top: 0; left: 0; right: 0;
+            height: 3px;
         }
         .card h3 {
             font-size: 13px;
@@ -57,6 +81,7 @@
         .card .value {
             font-size: 36px;
             font-weight: 700;
+            font-variant-numeric: tabular-nums;
         }
         .card .unit {
             font-size: 16px;
@@ -68,13 +93,15 @@
             color: #666;
             margin-top: 4px;
         }
-        .pm25 .value { color: #4ade80; }
-        .pm25.warning .value { color: #facc15; }
-        .pm25.danger .value { color: #f87171; }
-        .tvoc .value { color: #60a5fa; }
-        .eco2 .value { color: #c084fc; }
-        .temp .value { color: #fb923c; }
-        .hum .value { color: #38bdf8; }
+        .card.pm25::before { background: linear-gradient(90deg, #4ade80, #facc15, #f87171); }
+        .card.pm25 .value { color: #4ade80; }
+        .card.pm25.warning .value { color: #facc15; }
+        .card.pm25.danger .value { color: #f87171; }
+        .card.tvoc::before { background: #60a5fa; }
+        .card.tvoc .value { color: #60a5fa; }
+        .card.eco2::before { background: #c084fc; }
+        .card.eco2 .value { color: #c084fc; }
+        .card.temp-hum::before { background: linear-gradient(90deg, #fb923c, #38bdf8); }
 
         .chart-container {
             background: #1a1a35;
@@ -97,20 +124,73 @@
             border: 1px solid #2a2a4a;
             font-size: 13px;
             color: #888;
+            flex-wrap: wrap;
         }
         .info-bar span { color: #e0e0e0; }
+        .info-bar .label { color: #888; }
+
+        .controls {
+            display: flex;
+            gap: 8px;
+        }
+        .btn {
+            padding: 6px 14px;
+            border: 1px solid #2a2a4a;
+            border-radius: 6px;
+            background: #1a1a35;
+            color: #888;
+            font-size: 12px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .btn:hover {
+            background: #2a2a4a;
+            color: #e0e0e0;
+        }
+        .btn.primary {
+            border-color: #7b2ff7;
+            color: #c084fc;
+        }
+        .btn.primary:hover {
+            background: #7b2ff722;
+        }
+
+        /* PM2.5 AQI 指示条 */
+        .aqi-bar {
+            display: flex;
+            height: 4px;
+            border-radius: 2px;
+            overflow: hidden;
+            margin-top: 12px;
+        }
+        .aqi-bar div {
+            flex: 1;
+        }
+        .aqi-bar .good { background: #4ade80; }
+        .aqi-bar .moderate { background: #facc15; }
+        .aqi-bar .unhealthy-s { background: #f97316; }
+        .aqi-bar .unhealthy { background: #f87171; }
+        .aqi-bar .very-unhealthy { background: #a855f7; }
 
         @media (max-width: 640px) {
             .grid { grid-template-columns: 1fr 1fr; }
             .card .value { font-size: 28px; }
+            .header h1 { font-size: 18px; }
+        }
+        @media (max-width: 400px) {
+            .grid { grid-template-columns: 1fr; }
         }
     </style>
 </head>
 <body>
     <div class="header">
         <h1>🔬 FDM3D-Enclosure · 空气质量</h1>
-        <div>
-            <span class="status" id="connectionStatus">● 离线</span>
+        <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;">
+            <div class="controls">
+                <button class="btn" onclick="window.location='/api/export/csv'">📥 CSV</button>
+                <button class="btn primary" onclick="clearHistory()">🗑️ 清空</button>
+            </div>
+            <span class="status offline" id="connectionStatus">● 离线</span>
         </div>
     </div>
 
@@ -122,6 +202,13 @@
                 <span class="unit">µg/m³</span>
             </div>
             <div class="sub" id="pm25Sub">PM10: -- µg/m³</div>
+            <div class="aqi-bar">
+                <div class="good"></div>
+                <div class="moderate"></div>
+                <div class="unhealthy-s"></div>
+                <div class="unhealthy"></div>
+                <div class="very-unhealthy"></div>
+            </div>
         </div>
         <div class="card tvoc">
             <h3>🧪 TVOC 总挥发性有机物</h3>
@@ -129,7 +216,7 @@
                 <span class="value" id="tvocValue">--</span>
                 <span class="unit">ppb</span>
             </div>
-            <div class="sub" id="tvocSub">安全阈值: &lt; 250 ppb</div>
+            <div class="sub" id="tvocSub">基线: &lt; 250 ppb &nbsp;|&nbsp; 告警: &gt; 500 ppb</div>
         </div>
         <div class="card eco2">
             <h3>🌿 eCO₂ 等效 CO₂</h3>
@@ -137,31 +224,47 @@
                 <span class="value" id="eco2Value">--</span>
                 <span class="unit">ppm</span>
             </div>
-            <div class="sub">大气基线: ~400 ppm</div>
+            <div class="sub" id="eco2Sub">大气基线: ~400 ppm &nbsp;|&nbsp; 告警: &gt; 1000 ppm</div>
         </div>
-        <div class="card temp">
-            <h3>🌡️ 温度</h3>
+        <div class="card temp-hum">
+            <h3>🌡️ 环境</h3>
             <div>
-                <span class="value" id="tempValue">--</span>
+                <span class="value" id="tempValue" style="color:#fb923c;">--</span>
                 <span class="unit">°C</span>
+                <span style="color:#666;margin:0 8px;">|</span>
+                <span class="value" id="humValue" style="color:#38bdf8;">--</span>
+                <span class="unit">%</span>
             </div>
-            <div class="sub" id="humSub">湿度: --%</div>
+            <div class="sub" id="envSub">外罩内部温湿度</div>
         </div>
     </div>
 
     <div class="chart-container">
+        <div style="display:flex;justify-content:space-between;margin-bottom:12px;">
+            <span style="color:#8888aa;font-size:13px;letter-spacing:1px;">实时趋势</span>
+            <div style="display:flex;gap:16px;font-size:12px;">
+                <label style="color:#666;cursor:pointer;">
+                    <input type="checkbox" id="showPM25" checked onchange="toggleDataset(0)"> PM2.5
+                </label>
+                <label style="color:#666;cursor:pointer;">
+                    <input type="checkbox" id="showTVOC" checked onchange="toggleDataset(1)"> TVOC
+                </label>
+            </div>
+        </div>
         <canvas id="historyChart"></canvas>
     </div>
 
     <div class="info-bar">
-        <div>风扇: <span id="fanSpeed">--</span>%</div>
-        <div>更新: <span id="lastUpdate">--</span></div>
-        <div>数据点: <span id="dataPoints">0</span></div>
+        <div><span class="label">风扇:</span> <span id="fanSpeed">--</span>%</div>
+        <div><span class="label">数据点:</span> <span id="dataPoints">0</span></div>
+        <div><span class="label">更新:</span> <span id="lastUpdate">--</span></div>
+        <div><span class="label">模式:</span> <span id="modeLabel">离线</span></div>
     </div>
 
     <script>
         const socket = io();
         let chart;
+        let chartData = { labels: [], pm25: [], tvoc: [] };
 
         // 初始化 Chart.js
         function initChart() {
@@ -177,9 +280,10 @@
                             borderColor: '#4ade80',
                             backgroundColor: 'rgba(74,222,128,0.1)',
                             tension: 0.3,
-                            fill: false,
+                            fill: true,
                             pointRadius: 0,
-                            borderWidth: 2
+                            borderWidth: 2,
+                            yAxisID: 'y'
                         },
                         {
                             label: 'TVOC (ppb)',
@@ -187,9 +291,10 @@
                             borderColor: '#60a5fa',
                             backgroundColor: 'rgba(96,165,250,0.1)',
                             tension: 0.3,
-                            fill: false,
+                            fill: true,
                             pointRadius: 0,
-                            borderWidth: 2
+                            borderWidth: 2,
+                            yAxisID: 'y1'
                         }
                     ]
                 },
@@ -201,30 +306,51 @@
                         x: {
                             ticks: { 
                                 color: '#666',
-                                maxTicksLimit: 10,
-                                callback: v => {
-                                    const lbl = chart.data.labels[v];
-                                    return lbl ? lbl.split('T')[1].slice(0,5) : '';
+                                maxTicksLimit: 12,
+                                callback: function(v) {
+                                    const lbl = this.getLabelForValue(v);
+                                    return lbl ? lbl.split('T')[1]?.slice(0,5) || lbl : '';
                                 }
                             },
                             grid: { color: '#2a2a4a' }
                         },
                         y: {
+                            type: 'linear',
+                            display: true,
+                            position: 'left',
+                            title: { display: true, text: 'PM2.5 (µg/m³)', color: '#4ade80' },
                             beginAtZero: true,
-                            ticks: { color: '#666' },
+                            ticks: { color: '#4ade80' },
                             grid: { color: '#2a2a4a' }
+                        },
+                        y1: {
+                            type: 'linear',
+                            display: true,
+                            position: 'right',
+                            title: { display: true, text: 'TVOC (ppb)', color: '#60a5fa' },
+                            beginAtZero: true,
+                            ticks: { color: '#60a5fa' },
+                            grid: { display: false }
                         }
                     },
                     plugins: {
                         legend: {
-                            labels: { color: '#888' }
+                            labels: { color: '#888', usePointStyle: true }
                         }
                     }
                 }
             });
         }
 
-        // 更新 PM2.5 卡片颜色
+        // 切换数据可见
+        function toggleDataset(index) {
+            if (chart) {
+                chart.setDatasetVisibility(index, !chart.isDatasetVisible(index));
+                chart.update();
+            }
+        }
+
+        // 更新 PM2.5 卡片颜色和 AQI 指示
         function updatePM25Color(value) {
             const card = document.getElementById('pm25Card');
             card.classList.remove('warning', 'danger');
@@ -232,20 +358,33 @@
             else if (value > 50) card.classList.add('warning');
         }
 
-        // 连接 WebSocket
+        // 清空历史
+        function clearHistory() {
+            if (chart) {
+                chart.data.labels = [];
+                chart.data.datasets[0].data = [];
+                chart.data.datasets[1].data = [];
+                chart.update('none');
+                document.getElementById('dataPoints').textContent = '0';
+            }
+        }
+
+        // 连接状态
         socket.on('connect', () => {
             document.getElementById('connectionStatus').textContent = '● 在线';
             document.getElementById('connectionStatus').className = 'status online';
+            document.getElementById('modeLabel').textContent = '已连接';
         });
 
         socket.on('disconnect', () => {
             document.getElementById('connectionStatus').textContent = '● 离线';
             document.getElementById('connectionStatus').className = 'status offline';
+            document.getElementById('modeLabel').textContent = '离线';
         });
 
         // 接收历史数据
         socket.on('history', (data) => {
-            if (chart && data.timestamps) {
+            if (chart && data.timestamps?.length) {
                 chart.data.labels = data.timestamps;
                 chart.data.datasets[0].data = data.pm25;
                 chart.data.datasets[1].data = data.tvoc;
@@ -259,23 +398,23 @@
             const d = msg.current;
             const h = msg.history;
 
-            // 更新当前值
-            document.getElementById('pm25Value').textContent = d.pm25?.toFixed(1) || '--';
+            // 当前值
+            document.getElementById('pm25Value').textContent = d.pm25?.toFixed(1) ?? '--';
             document.getElementById('tvocValue').textContent = d.tvoc ?? '--';
             document.getElementById('eco2Value').textContent = d.eco2 ?? '--';
-            document.getElementById('tempValue').textContent = d.temp?.toFixed(1) || '--';
+            document.getElementById('tempValue').textContent = d.temp?.toFixed(1) ?? '--';
+            document.getElementById('humValue').textContent = d.hum?.toFixed(0) ?? '--';
 
-            // 更新次要信息
-            document.getElementById('pm25Sub').textContent = `PM10: ${d.pm10?.toFixed(1) || '--'} µg/m³`;
-            document.getElementById('humSub').textContent = `湿度: ${d.hum?.toFixed(1) || '--'}%`;
-            document.getElementById('fanSpeed').textContent = d.fan_pwm ? ((d.fan_pwm / 255) * 100).toFixed(0) : '--';
+            // 次要信息
+            document.getElementById('pm25Sub').textContent = d.pm10 ? `PM10: ${d.pm10?.toFixed(1) ?? '--'} µg/m³` : 'PM10: -- µg/m³';
+            document.getElementById('fanSpeed').textContent = d.fan_pwm != null ? ((d.fan_pwm / 255) * 100).toFixed(0) : '--';
             document.getElementById('lastUpdate').textContent = new Date().toLocaleTimeString();
             document.getElementById('dataPoints').textContent = h?.timestamps?.length || 0;
 
             updatePM25Color(d.pm25 || 0);
 
             // 更新图表
-            if (chart && h.timestamps) {
+            if (chart && h?.timestamps) {
                 chart.data.labels = h.timestamps;
                 chart.data.datasets[0].data = h.pm25;
                 chart.data.datasets[1].data = h.tvoc;

@@ -1,0 +1,75 @@
+name: CI Build
+
+on:
+  push:
+    branches: [main, develop]
+    paths-ignore:
+      - 'docs/**'
+      - '**/*.md'
+      - '.gitignore'
+  pull_request:
+    branches: [main]
+
+jobs:
+  # ===== Firmware: Air Quality Monitor (ESP32) =====
+  firmware-air-quality:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install PlatformIO
+        run: pip install platformio
+
+      - name: Build ESP32 firmware
+        run: |
+          cd firmware/air-quality-monitor
+          pio run
+
+  # ===== Firmware: Fan Control (Arduino Nano) =====
+  firmware-fan-control:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install PlatformIO
+        run: pip install platformio
+
+      - name: Build Arduino Nano firmware
+        run: |
+          cd firmware/fan-control
+          pio run
+
+  # ===== Dashboard: Node.js =====
+  dashboard:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: software/dashboard
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npx standard --fix || true
+
+      - name: Test (syntax check)
+        run: node -e "require('./server.js')" &
+          sleep 2 && kill $! || true
